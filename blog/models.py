@@ -1,7 +1,7 @@
 from django.db import models
 from django.urls import reverse
 from django.contrib.auth.models import User
-from django.db.models import Count
+from django.db.models import Count, Prefetch
 
 
 class PostQuerySet(models.QuerySet):
@@ -14,16 +14,29 @@ class PostQuerySet(models.QuerySet):
         popular_posts = self.annotate(likes_count=Count('likes')).order_by('-likes_count')
         return popular_posts
 
-    def fetch_with_comments_count(self):
-        most_popular_posts = list(self)
-        most_popular_posts_ids = [post.id for post in most_popular_posts]
-        posts_with_comments = Post.objects.filter(id__in=most_popular_posts_ids).annotate(
-            comments_count=Count('comments'))
-        ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
+    def fetch_with_comments_count(self) -> list:
+        posts_ids = [post.id for post in self]
+
+        posts_with_comments = Post \
+            .objects.all() \
+            .filter(id__in=posts_ids) \
+            .annotate(comments_count=Count('comments'))
+
+        ids_and_comments = posts_with_comments.values_list(
+            'id',
+            'comments_count'
+        )
         count_for_id = dict(ids_and_comments)
-        for post in most_popular_posts:
+
+        for post in self:
             post.comments_count = count_for_id[post.id]
-        return most_popular_posts
+
+        return list(self)
+
+    def prefetch_related_tags(self):
+        return self.prefetch_related(
+            Prefetch('tags', queryset=Tag.objects.popular())
+        )
 
 
 class TagQuerySet(models.QuerySet):
@@ -102,7 +115,8 @@ class Comment(models.Model):
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        verbose_name='Автор')
+        verbose_name='Автор',
+        related_name='comments')
 
     text = models.TextField('Текст комментария')
     published_at = models.DateTimeField('Дата и время публикации')
